@@ -1,0 +1,52 @@
+name: Checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact source commit to validate for release packaging
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Go format, vet and tests
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go vet ./...
+          GHRCTL_COMPOSE_TEST=1 go test -race ./...
+      - name: Build standalone Linux executable
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -trimpath -o dist/ghrctl-linux-amd64 ./cmd/ghrctl
+          dist/ghrctl-linux-amd64 version
+      - name: Shell and workflow checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          bash -n scripts/*.sh
+          shellcheck scripts/*.sh
+          actionlint
+          python3 tests/test_scripts.py
+          python3 -m unittest discover -s tests -p 'test_release*.py'
+      - name: Validate release policy with the pinned Release Please engine
+        run: |
+          npm install --prefix "$RUNNER_TEMP/release-policy" --no-audit --no-fund --ignore-scripts release-please@17.6.0 ajv@8.17.1
+          node tests/release-policy.cjs "$RUNNER_TEMP/release-policy"

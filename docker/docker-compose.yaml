@@ -1,0 +1,41 @@
+services:
+  github-runner:
+    image: weteams/github-runner:commit_b3fa2dd
+    container_name: github-runner
+
+    restart: unless-stopped
+
+    env_file:
+      - ../.env
+
+    volumes:
+      # Use Docker daemon from the VPS host
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Persistent caches
+      - trivy-cache:/home/gthb-runner/.cache/trivy
+      - playwright-cache:/home/gthb-runner/.cache/ms-playwright
+      - pnpm-cache:/home/gthb-runner/.local/share/pnpm
+
+    # Must match the GID of /var/run/docker.sock on the host
+    group_add:
+      - "${DOCKER_GID}"
+
+    # Helpful for Chromium / Playwright
+    shm_size: "1gb"
+
+    stop_grace_period: 2m
+
+    deploy:
+      resources:
+        limits:
+          cpus: "3"
+          memory: 6G
+        reservations:
+          cpus: "1"
+          memory: 2G
+
+volumes:
+  trivy-cache:
+  playwright-cache:
+  pnpm-cache:

@@ -1,0 +1,81 @@
+name: PR description
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-description:
+    name: PR description complete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required sections or release review
+        # Metadata only: no checkout, credentials, or execution of PR content.
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def meaningful(text):
+              text = re.sub(r'<!--.*?(?:-->|\Z)', '', text, flags=re.S)
+              lines = []
+              for line in text.splitlines():
+                  line = re.sub(r'^\s*(?:[-*+]\s+(?:\[[ xX]\]\s*)?|>\s*)', '', line)
+                  line = line.strip(' \t*_`.:!?')
+                  if line:
+                      lines.append(line)
+              value = ' '.join(lines).casefold()
+              return value if value not in {'', 'todo', 'tbd', 'n/a', 'na', 'none', 'not applicable', 'pending', 'fill in', 'coming soon', 'not tested', 'your text here', 'replace me'} else ''
+
+          def validate(pr):
+              body = re.sub(r'<!--.*?(?:-->|\Z)', '', pr.get('body') or '', flags=re.S)
+              same_repo = (pr.get('head', {}).get('repo') or {}).get('full_name') == (pr.get('base', {}).get('repo') or {}).get('full_name')
+              version = re.fullmatch(r'chore\(main\): release (\d+\.\d+\.\d+)', pr['title'])
+              is_release = (same_repo and pr.get('head', {}).get('ref') == 'release-please--branches--main'
+                            and version and body.startswith(':robot: I have created a release'))
+              if is_release:
+                  parts = body.replace('\r\n', '\n').split('\n---\n')
+                  notes = parts[1] if len(parts) >= 3 else ''
+                  if (not re.search(r'^##? \[?' + re.escape(version[1]) + r'(?:\]|\s|$)', notes, re.M)
+                          or not re.search(r'^[-*] \S', notes, re.M)):
+                      raise ValueError('Release PR must retain the generated version and changelog.')
+                  for item in ('Version and changelog reviewed.', 'Breaking changes and migration guidance reviewed.'):
+                      if not re.search(r'^- \[[xX]\] ' + re.escape(item) + r'\s*$', body, re.M):
+                          raise ValueError('Complete both Release review checkboxes after reviewing this candidate. Bot updates may reset them.')
+                  return
+              # Fenced examples cannot introduce fake section headings.
+              headings_body = re.sub(r'(?ms)^\s*(`{3,}|~{3,})[^\n]*\n.*?^\s*\1\s*$', lambda m: re.sub(r'(?m)^(\s*)#', r'\1 ', m[0]), body)
+              headings = list(re.finditer(r'^## ([^\n]+)\s*$', headings_body, re.M))
+              sections = {}
+              for i, heading in enumerate(headings):
+                  key = heading[1].strip().casefold()
+                  if key in sections:
+                      raise ValueError('Remove duplicate PR section headings.')
+                  end = headings[i + 1].start() if i + 1 < len(headings) else len(headings_body)
+                  sections[key] = headings_body[heading.end():end].strip()
+              for name in ('Problem and change', 'Validation performed', 'Breaking changes and migration'):
+                  value = sections.get(name.casefold(), '')
+                  before_footer = re.split(r'(?m)^BREAKING[ -]CHANGE:', value, maxsplit=1)[0].strip()
+                  if name == 'Breaking changes and migration' and before_footer.casefold().rstrip('.') == 'none':
+                      if (re.match(r'\w+(?:\([^)]*\))?!:', pr['title'])
+                              or re.search(r'^BREAKING[ -]CHANGE:\s*\S', body, re.M)):
+                          raise ValueError('A breaking-change PR must explain its impact and migration; None is not valid.')
+                      continue
+                  if not meaningful(value):
+                      raise ValueError(f'Complete the {name!r} section with useful content. Placeholder text does not count. See CONTRIBUTING.md.')
+
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          try:
+              validate(event['pull_request'])
+          except ValueError as error:
+              raise SystemExit(str(error))
+          print('PR description is complete.')
+          PY
