@@ -1,0 +1,27 @@
+name: PR title
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Conventional Commit title
+        # Read metadata as data; do not check out or execute PR code.
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          title = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']['title']
+          pattern = r'(feat|fix|perf|docs|chore|refactor|test|build|ci|style|revert)(\([^()\r\n]+\))?!?: [^\s].*'
+          if not re.fullmatch(pattern, title):
+              raise SystemExit('Use a Conventional Commit title, e.g. fix: handle runner restart or feat!: change configuration. See docs/releases.md.')
+          PY

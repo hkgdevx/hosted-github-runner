@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "initial-version": "0.1.0",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "draft": true,
+      "force-tag-creation": true,
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "changelog-path": "CHANGELOG.md",
+      "pull-request-footer": "## Release review\n\n- [ ] Version and changelog reviewed.\n- [ ] Breaking changes and migration guidance reviewed.\n\nComplete these after reviewing the current candidate. Bot updates may reset the checklist. Live acceptance happens on the draft release after packaging.\n\nThis PR was generated with [Release Please](https://github.com/googleapis/release-please).",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "docs", "section": "Documentation", "hidden": true },
+        { "type": "chore", "section": "Maintenance", "hidden": true },
+        { "type": "refactor", "section": "Refactoring", "hidden": true },
+        { "type": "test", "section": "Tests", "hidden": true },
+        { "type": "build", "section": "Build", "hidden": true },
+        { "type": "ci", "section": "CI", "hidden": true },
+        { "type": "style", "section": "Style", "hidden": true },
+        { "type": "revert", "section": "Reverts", "hidden": true }
+      ]
+    }
+  }
+}

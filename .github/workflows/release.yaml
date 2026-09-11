@@ -1,0 +1,142 @@
+name: Release candidate
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Version tag created by Release Please
+        required: true
+        type: string
+      sha:
+        description: Exact release commit from Release Please
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft version tag to retry (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Resolve and verify the version tag
+        id: source
+        env:
+          VERSION: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ inputs.sha }}
+        run: |
+          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          sha=$(git rev-parse --verify "refs/tags/$VERSION^{commit}")
+          if [[ -n "$EXPECTED_SHA" ]]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$sha" = "$EXPECTED_SHA"
+          fi
+          git merge-base --is-ancestor "$sha" origin/main
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+      - name: Validate release metadata
+        env:
+          VERSION: ${{ inputs.tag }}
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+        run: python3 scripts/release.py prepare "$VERSION" "$RELEASE_SHA"
+  checks:
+    needs: resolve
+    uses: ./.github/workflows/checks.yaml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+  release:
+    needs: [resolve, checks]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Validate draft and prevent release replacement
+        run: |
+          python3 scripts/release.py prepare "$VERSION" "$RELEASE_SHA"
+          python3 scripts/release.py check-draft "$VERSION" "$RELEASE_SHA"
+          python3 scripts/release.py check-image "$VERSION"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build image for acceptance
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: hkgdevx/hosted-github-runner:${{ inputs.tag }}
+      - name: Smoke-test the exact image before publishing
+        run: docker run --rm -i --entrypoint bash "hkgdevx/hosted-github-runner:$VERSION" -s < scripts/image-smoke.sh
+      - name: Push tested image and capture its digest
+        id: image
+        run: |
+          python3 scripts/release.py check-draft "$VERSION" "$RELEASE_SHA"
+          python3 scripts/release.py check-image "$VERSION"
+          image="hkgdevx/hosted-github-runner:$VERSION"
+          docker push "$image"
+          reference=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          [[ "$reference" =~ ^hkgdevx/hosted-github-runner@sha256:[0-9a-f]{64}$ ]]
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          anonymous_config=$(mktemp -d)
+          DOCKER_CONFIG="$anonymous_config" docker pull "$reference"
+      - name: Build binary and release manifest
+        env:
+          IMAGE: ${{ steps.image.outputs.reference }}
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.commit=$RELEASE_SHA -X main.image=$IMAGE" -o dist/ghrctl-linux-amd64 ./cmd/ghrctl
+          dist/ghrctl-linux-amd64 version
+          test "$(dist/ghrctl-linux-amd64 version)" = "$(printf 'ghrctl %s\ncommit: %s\nbundled image: %s' "$VERSION" "$RELEASE_SHA" "$IMAGE")"
+          jq -n --arg version "$VERSION" --arg commit "$RELEASE_SHA" --arg image "$IMAGE" '{version:$version,commit:$commit,platform:"linux/amd64",image:$image}' > dist/release-manifest.json
+          cd dist
+          sha256sum ghrctl-linux-amd64 release-manifest.json > checksums.txt
+          sha256sum --check checksums.txt
+      - name: Complete draft for live acceptance
+        run: |
+          python3 scripts/release.py check-draft "$VERSION" "$RELEASE_SHA"
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft --title "ghrctl $VERSION" --notes-file dist/release-notes.md
+          gh release upload "$VERSION" dist/ghrctl-linux-amd64 dist/checksums.txt dist/release-manifest.json --repo "$GITHUB_REPOSITORY"
+          echo "Draft $VERSION is ready for live acceptance; publication remains manual." >> "$GITHUB_STEP_SUMMARY"
+      - name: Report partial release state
+        if: failure()
+        run: |
+          echo "Packaging $VERSION failed. Inspect the draft and versioned image before retrying; see docs/releases.md." >> "$GITHUB_STEP_SUMMARY"
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets; then
+            echo 'Draft state could not be read; inspect GitHub before retrying.'
+          fi
+          if ! docker buildx imagetools inspect "hkgdevx/hosted-github-runner:$VERSION"; then
+            echo 'Image state could not be read; an inspection failure does not prove absence.'
+          fi

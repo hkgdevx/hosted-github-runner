@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a reproducible problem with the CLI, runner, or release process.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please search existing issues first. Remove PATs, credentials, and private data from all logs and screenshots.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options: [CLI, Runner image, Installation or upgrade, Release automation, Unsure]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Use ghrctl version, an image tag, or a source commit. Enter unknown if installation failed.
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options: [Release binary, Source build, Bash helper and Compose, GitHub Actions, Other or unsure]
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host OS and architecture
+      placeholder: Ubuntu 24.04, x86_64; or unknown
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker and Compose versions
+      description: Include these for container problems, if available.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the commands and conditions needed to reproduce the problem. Remove credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Screenshots or workaround

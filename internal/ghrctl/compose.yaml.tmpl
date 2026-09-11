@@ -1,0 +1,30 @@
+services:
+  github-runner:
+    image: {{quote .Config.Image}}
+    container_name: ghrctl-runner
+    labels:
+      io.ghrctl.owner: {{quote .Owner}}
+    restart: unless-stopped
+    env_file:
+      - runner.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - trivy-cache:/home/gthb-runner/.cache/trivy
+      - playwright-cache:/home/gthb-runner/.cache/ms-playwright
+      - pnpm-cache:/home/gthb-runner/.local/share/pnpm
+    group_add:
+      - "{{.GID}}"
+    shm_size: {{quote .Config.SharedMemory}}
+    stop_grace_period: 2m
+    deploy:
+      resources:
+        limits:
+          cpus: {{quote .Config.CPUs}}
+          memory: {{quote .Config.Memory}}
+        reservations:
+          cpus: {{quote .Config.ReservedCPUs}}
+          memory: {{quote .Config.ReservedMemory}}
+volumes:
+  trivy-cache:
+  playwright-cache:
+  pnpm-cache:
